@@ -4,6 +4,7 @@
 #include <wayland-server-core.h>
 #include <wlr/render/wlr_renderer.h>
 #include <wlr/types/wlr_buffer.h>
+#include <wlr/types/wlr_cursor.h>
 #include <wlr/types/wlr_output_layout.h>
 #include <wlr/types/wlr_server_decoration.h>
 #include <wlr/types/wlr_subcompositor.h>
@@ -44,6 +45,7 @@ void view_init(struct sway_view *view, enum sway_view_type type,
 	view->allow_request_urgent = true;
 	view->shortcuts_inhibit = SHORTCUTS_INHIBIT_DEFAULT;
 	wl_signal_init(&view->events.unmap);
+	view->tearing_mode = TEARING_WINDOW_HINT;
 }
 
 void view_destroy(struct sway_view *view) {
@@ -1455,4 +1457,16 @@ bool view_is_transient_for(struct sway_view *child,
 		struct sway_view *ancestor) {
 	return child->impl->is_transient_for &&
 		child->impl->is_transient_for(child, ancestor);
+}
+
+bool view_can_tear(struct sway_view *view) {
+	switch(view->tearing_mode) {
+	case TEARING_OVERRIDE_FALSE:
+		return false;
+	case TEARING_OVERRIDE_TRUE:
+		return true;
+	case TEARING_WINDOW_HINT:
+		return view->tearing_hint;
+	}
+	return false;
 }

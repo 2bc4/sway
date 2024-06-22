@@ -420,6 +420,20 @@ bool output_has_opaque_overlay_layer_surface(struct sway_output *output) {
 	return false;
 }
 
+static bool output_can_tear_fullscreen_view(struct sway_output *output, 
+		struct sway_view *view) {
+	if (!view) {
+		return false;
+	}
+#ifdef WLR_HAS_DRM_BACKEND
+	if (wlr_backend_is_drm(output->wlr_output->backend) && 
+			output->tearing_allowed && view_can_tear(view)) {
+		return true;
+	}
+#endif
+	return false;
+}
+
 struct send_frame_done_data {
 	struct timespec when;
 	int msec_until_refresh;
@@ -429,8 +443,12 @@ static void send_frame_done_iterator(struct sway_output *output,
 		struct sway_view *view, struct wlr_surface *surface,
 		struct wlr_box *box, void *user_data) {
 	int view_max_render_time = 0;
+	bool view_can_tear = false;
 	if (view != NULL) {
 		view_max_render_time = view->max_render_time;
+		if (view->container && container_is_fullscreen_or_child(view->container)) {
+			view_can_tear = output_can_tear_fullscreen_view(output, view);
+		}
 	}
 
 	struct send_frame_done_data *data = user_data;
@@ -438,7 +456,8 @@ static void send_frame_done_iterator(struct sway_output *output,
 	int delay = data->msec_until_refresh - output->max_render_time
 			- view_max_render_time;
 
-	if (output->max_render_time == 0 || view_max_render_time == 0 || delay < 1) {
+	if (output->max_render_time == 0 || view_max_render_time == 0 || delay < 1 ||
+			view_can_tear) {
 		wlr_surface_send_frame_done(surface, &data->when);
 	} else {
 		struct sway_surface *sway_surface = surface->data;
@@ -556,6 +575,24 @@ static void get_frame_damage(struct sway_output *output,
 	}
 }
 
+static struct sway_view *output_get_fullscreen_view(
+		struct sway_output *output) {
+	struct sway_workspace *workspace = output->current.active_workspace;
+	if (!workspace) {
+		return NULL;
+	}
+
+	struct sway_container *fullscreen_con = root->fullscreen_global;
+	if (!fullscreen_con) {
+		fullscreen_con = workspace->current.fullscreen;
+	}
+	if (fullscreen_con) {
+		return fullscreen_con->view;
+	}
+
+	return NULL;
+}
+
 static int output_repaint_timer_handler(void *data) {
 	struct sway_output *output = data;
 	struct wlr_output *wlr_output = output->wlr_output;
@@ -565,21 +602,18 @@ static int output_repaint_timer_handler(void *data) {
 
 	wlr_output->frame_pending = false;
 
+	struct timespec now;
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	wlr_output_cursor_move_any_expired(wlr_output, &now);
+
 	if (!wlr_output->needs_frame &&
 			!output->gamma_lut_changed &&
 			!pixman_region32_not_empty(&output->damage_ring.current)) {
 		return 0;
 	}
 
-	struct sway_workspace *workspace = output->current.active_workspace;
-	if (workspace == NULL) {
-		return 0;
-	}
-
-	struct sway_container *fullscreen_con = root->fullscreen_global;
-	if (!fullscreen_con) {
-		fullscreen_con = workspace->current.fullscreen;
-	}
+	wlr_output_cursor_move_all_deferred(wlr_output, &now);
+	struct sway_view *fullscreen_view = output_get_fullscreen_view(output);
 
 	struct wlr_output_state pending = {0};
 
@@ -601,11 +635,15 @@ static int output_repaint_timer_handler(void *data) {
 	pending.committed |= WLR_OUTPUT_STATE_DAMAGE;
 	get_frame_damage(output, &pending.damage);
 
-	if (fullscreen_con && fullscreen_con->view && !debug.noscanout) {
+	if (output_can_tear_fullscreen_view(output, fullscreen_view)) {
+		pending.tearing_page_flip = true;
+	}
+
+	if (fullscreen_view && !debug.noscanout) {
 		// Try to scan-out the fullscreen view
 		static bool last_scanned_out = false;
 		bool scanned_out =
-			scan_out_fullscreen_view(output, &pending, fullscreen_con->view);
+			scan_out_fullscreen_view(output, &pending, fullscreen_view);
 
 		if (scanned_out && !last_scanned_out) {
 			sway_log(SWAY_DEBUG, "Scanning out fullscreen view on %s",
@@ -657,7 +695,6 @@ static int output_repaint_timer_handler(void *data) {
 		.pass = render_pass,
 	};
 
-	struct timespec now;
 	clock_gettime(CLOCK_MONOTONIC, &now);
 
 	output_render(&ctx);
@@ -673,6 +710,8 @@ static int output_repaint_timer_handler(void *data) {
 	wlr_buffer_unlock(buffer);
 
 	if (!wlr_output_commit_state(wlr_output, &pending)) {
+		// if tearing page-flip failed, fall back to regular page-flip
+		output->tearing_allowed = false;
 		goto out;
 	}
 
@@ -740,9 +779,11 @@ static void handle_frame(struct wl_listener *listener, void *user_data) {
 
 	int delay = msec_until_refresh - output->max_render_time;
 
+	struct sway_view *fullscreen_view = output_get_fullscreen_view(output);
+
 	// If the delay is less than 1 millisecond (which is the least we can wait)
-	// then just render right away.
-	if (delay < 1) {
+	// or if the output is allowed to tear, then just render right away.
+	if (delay < 1 || output_can_tear_fullscreen_view(output, fullscreen_view)) {
 		output_repaint_timer_handler(output);
 	} else {
 		output->wlr_output->frame_pending = true;

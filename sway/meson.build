@@ -19,6 +19,7 @@ sway_sources = files(
 	'desktop/output.c',
 	'desktop/render.c',
 	'desktop/surface.c',
+	'desktop/tearing.c',
 	'desktop/transaction.c',
 	'desktop/xdg_shell.c',
 	'desktop/launcher.c',
@@ -42,6 +43,7 @@ sway_sources = files(
 	'config/seat.c',
 	'config/input.c',
 
+	'commands/allow_tearing.c',
 	'commands/assign.c',
 	'commands/bar.c',
 	'commands/bind.c',
@@ -73,6 +75,7 @@ sway_sources = files(
 	'commands/kill.c',
 	'commands/mark.c',
 	'commands/max_render_time.c',
+	'commands/max_cursor_latency.c',
 	'commands/opacity.c',
 	'commands/include.c',
 	'commands/input.c',
@@ -188,6 +191,7 @@ sway_sources = files(
 	'commands/input/xkb_variant.c',
 
 	'commands/output/adaptive_sync.c',
+	'commands/output/allow_tearing.c',
 	'commands/output/background.c',
 	'commands/output/disable.c',
 	'commands/output/dpms.c',

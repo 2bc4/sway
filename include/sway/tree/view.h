@@ -32,6 +32,12 @@ enum sway_view_prop {
 #endif
 };
 
+enum sway_view_tearing_mode {
+	TEARING_OVERRIDE_FALSE,
+	TEARING_OVERRIDE_TRUE,
+	TEARING_WINDOW_HINT,
+};
+
 struct sway_view_impl {
 	void (*get_constraints)(struct sway_view *view, double *min_width,
 			double *max_width, double *min_height, double *max_height);
@@ -122,8 +128,12 @@ struct sway_view {
 	struct wl_listener surface_new_subsurface;
 
 	int max_render_time; // In milliseconds
+	int max_cursor_latency; // In microseconds
 
 	enum seat_config_shortcuts_inhibit shortcuts_inhibit;
+
+	enum sway_view_tearing_mode tearing_mode;
+	bool tearing_hint;
 };
 
 struct sway_xdg_shell_view {
@@ -384,5 +394,7 @@ void view_save_buffer(struct sway_view *view);
 bool view_is_transient_for(struct sway_view *child, struct sway_view *ancestor);
 
 void view_assign_ctx(struct sway_view *view, struct launcher_ctx *ctx);
+
+bool view_can_tear(struct sway_view *view);
 
 #endif
